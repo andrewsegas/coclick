@@ -1,4 +1,4 @@
-# 🖱️ CoClick - Automação para Clash of Clans
+# CoClick - Automação para Clash of Clans
 
 **CoClick** é uma ferramenta automatizada feita em Python que auxilia em interações repetitivas no jogo **Clash of Clans**, utilizando OCR (reconhecimento óptico de caracteres), cliques programados e detecção de áreas na tela.
 
@@ -17,7 +17,7 @@ O CoClick permite que você mapeie áreas específicas do jogo Clash of Clans pa
 | ----- | ------------------------------------------------------------------------------------------------------------ |
 | `0`   | Seleciona **área de leitura** dos recursos: **Elixir**, **Gold** e **Elixir Negro**                          |
 | `9`   | Define a posição do **botão de pesquisa** da próxima vila para atacar                                        |
-| `8`   | Define o local onde o ataque será **iniciado** *(com o layout totalmente para cima e para a esquerda)* |
+| `8`   | Define o local onde o ataque será **iniciado** *(com o layout totalmente para cima e para a esquerda)*       |
 | `7`   | Define o local onde o ataque será **finalizado** *(Precisa ser em linha horizontal com o início)*            |
 | `6`   | Define a posição do botão **"Terminar ataque"**                                                              |
 | `5`   | Define o botão **"OK"** (após o término do ataque)                                                           |
@@ -46,47 +46,6 @@ ex: C:\Program Files\Tesseract-OCR
    pip install -r requirements.txt
    python coclick.py
 
-Claro! Aqui está a seção atualizada **🧰 Instalação e Execução**, incluindo instruções sobre como rodar o programa e configurar o arquivo `.ini` para personalizar o comportamento do CoClick:
-
----
-
-## 🧰 Instalação
-
-1. **Clone o repositório:**
-
-   ```bash
-   git clone https://github.com/seuusuario/coclick.git
-   cd coclick
-   ```
-
-2. **Instale as dependências:**
-
-   Crie um ambiente virtual (opcional, mas recomendado):
-
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate   # No Windows
-   source venv/bin/activate  # No Linux/Mac
-   ```
-
-   E instale os requisitos:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
----
-
-## ▶️ Como executar
-
-Execute o programa principal com:
-
-```bash
-python ANCR.py
-```
-
----
-
 ## ⚙️ Arquivo de Configuração `.ini`
 
 Você pode personalizar o comportamento dos ataques editando o arquivo `config.ini`, que será gerado após o mapeamento inicial das posições. Na seção `[Ataque]`, os seguintes parâmetros podem ser ajustados:
@@ -97,7 +56,11 @@ gold = 500000
 elixir = 500000
 blackelixir = 0
 star = 2
+
+[Tempo]
+desligar_em_minutos = 15
 ```
+
 
 ### Explicação dos parâmetros:
 
@@ -113,3 +76,11 @@ star = 2
 * `1` – Ataca **pra destruir o máximo** para obter recursos e **ganhar troféus**.
 * `2` – Ataca focando em recursos, **mas faz alguns ataques curtos para perder troféu ocasionalmente**.
 * `3` – Ataca **sempre com ataques curtos**, **priorizando perder troféus** (ideal para queda de ranking).
+
+### Valores possíveis para `star`:
+
+* `1` – Ataca **pra destruir o máximo** para obter recursos e **ganhar troféus**.
+* `2` – Ataca focando em recursos, **mas faz alguns ataques curtos para perder troféu ocasionalmente**.
+* `3` – Ataca **sempre com ataques curtos**, **priorizando perder troféus** (ideal para queda de ranking).
+
+Na seção `[Tempo]`, o parametro desligar_em_minutos caso queira finalizar depois de x minutos (se deletar ele não desligara):
