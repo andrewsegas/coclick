@@ -81,7 +81,7 @@ def on_key_press(key):
             salvar_posicao('procurar', procurar)
             
         if key == keyboard.KeyCode.from_char('1'):  # exercito Atacar (seleção de exercito)
-            exercitoAtacar = pyautogui.position()
+            exercitoatacar = pyautogui.position()
             salvar_posicao('exercitoatacar', exercitoatacar)
 
     if key == keyboard.KeyCode.from_char('p'):  # Verifica se a tecla pressionada é o p
