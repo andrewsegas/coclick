@@ -79,6 +79,10 @@ def on_key_press(key):
         if key == keyboard.KeyCode.from_char('2'):  # Procurar
             procurar = pyautogui.position()
             salvar_posicao('procurar', procurar)
+            
+        if key == keyboard.KeyCode.from_char('1'):  # exercito Atacar (seleção de exercito)
+            exercitoAtacar = pyautogui.position()
+            salvar_posicao('exercitoatacar', exercitoatacar)
 
     if key == keyboard.KeyCode.from_char('p'):  # Verifica se a tecla pressionada é o p
         if play:
@@ -178,6 +182,10 @@ def coloca_pra_atacar():
     
     time.sleep(random.uniform(2,3))
     pyautogui.moveTo(posicoes.get("procurar")[0] + round(random.uniform(-5,5)), posicoes.get("procurar")[1] + round(random.uniform(-5,5)))  
+    pyautogui.click()
+    
+    time.sleep(random.uniform(2,3))
+    pyautogui.moveTo(posicoes.get("exercitoatacar")[0] + round(random.uniform(-5,5)), posicoes.get("exercitoatacar")[1] + round(random.uniform(-5,5)))  
     pyautogui.click()
         
 def check_attack(ataque_info):
