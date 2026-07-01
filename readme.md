@@ -9,11 +9,16 @@ Agora com **interface gráfica** (painel para iniciar/parar e acompanhar as
 estatísticas) e distribuído como um **programa pronto**: seus amigos só baixam,
 extraem e abrem. Sem instalar Python, sem instalar Tesseract, sem mexer no PATH.
 
+### ⬇️ Download
+
+Baixe a última versão em **[Releases](https://github.com/andrewsegas/coclick/releases/latest)**
+→ arquivo **`CoClick.zip`**.
+
 ---
 
 ## ▶️ Para usar (quem recebeu o CoClick.zip)
 
-1. Baixe o **CoClick.zip**.
+1. Baixe o **`CoClick.zip`** na [página de Releases](https://github.com/andrewsegas/coclick/releases/latest).
 2. Clique com o botão direito → **Extrair tudo**.
 3. Abra a pasta `CoClick` e dê dois cliques em **`CoClick.exe`**.
    - Se o Windows mostrar um aviso azul do SmartScreen: clique em
