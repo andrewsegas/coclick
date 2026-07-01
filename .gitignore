@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller build output
+build/
+dist/
+
+# Bundled Tesseract-OCR binaries — drop your own per vendor/tesseract/README.txt
+vendor/tesseract/*
+!vendor/tesseract/README.txt
+
+# Local / misc
+configbkp.ini
+*.rar

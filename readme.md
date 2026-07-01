@@ -1,116 +1,82 @@
-# 🖱️ CoClick - Automação para Clash of Clans
+# 🖱️ CoClick — Bot de farm para Clash of Clans
 
-**CoClick** é uma ferramenta automatizada feita em Python que auxilia em interações repetitivas no jogo **Clash of Clans**, utilizando OCR (reconhecimento óptico de caracteres), cliques programados e detecção de áreas na tela.
+**CoClick** automatiza os ataques repetitivos de farm no **Clash of Clans**.
+Ele lê os recursos da vila na tela com OCR (Tesseract), decide se vale a pena
+atacar de acordo com os limites que você definir, e executa o ataque sozinho —
+em loop.
 
----
-
-## 🚀 Funcionalidades
-
-- 📌 **Captura de tela com OCR** usando Tesseract para extrair textos da tela do jogo.
-- 🎯 **Clique automático** em posições pré-definidas do mapa
-
-O CoClick permite que você mapeie áreas específicas do jogo Clash of Clans para realizar ações automáticas com base nas **posições do mouse**. Durante a execução, você pode registrar essas posições pressionando uma tecla numérica de `0` a `9`. Cada tecla representa uma ação específica.
-
-#### 📌 Teclas de mapeamento:
-
-| Tecla | Ação                                                                                                         |
-| ----- | ------------------------------------------------------------------------------------------------------------ |
-| `0`   | Seleciona **área de leitura** dos recursos: **Elixir**, **Gold** e **Elixir Negro**                          |
-| `9`   | Define a posição do **botão de pesquisa** da próxima vila para atacar                                        |
-| `8`   | Define o local onde o ataque será **iniciado** *(com o layout totalmente para cima e para a esquerda)* |
-| `7`   | Define o local onde o ataque será **finalizado** *(Precisa ser em linha horizontal com o início)*            |
-| `6`   | Define a posição do botão **"Terminar ataque"**                                                              |
-| `5`   | Define o botão **"OK"** (após o término do ataque)                                                           |
-| `4`   | Define o botão **"Voltar"**                                                                                  |
-| `3`   | Define o botão **"Atacar"**                                                                                  |
-| `2`   | Define o botão **"Procurar vila"**                                                                           |
-| `1`   | Define o botão **"Atacar (selecionar tropas)"**                                                              |
-
-Essas posições são salvas em um arquivo `config.ini`, e reutilizadas em execuções futuras, permitindo total automação das batalhas.
-
-- 🎲 **Delays aleatórios** para simular interações humanas.
-- 📝 **Armazenamento e leitura de posições** do mouse via `config.ini`.
-- 🔊 **Emissão de alertas sonoros** em ao encontrar vila para atacar.
----
-
-## 🧰 Instalação
-  Antes de qualquer coisa instale o python 
-    - na insntalação escolha adicionar Path
-    - Instale o **Tesseract-OCR**:
-    - Baixe: https://github.com/UB-Mannheim/tesseract/wiki
-    - adicione manualmente na variavel de ambiente path o endereço da pasta tesseract
-ex: C:\Program Files\Tesseract-OCR
-
-1. abra o prompt de comanndo repositório:
-   ```bash
-   cd [pasta do Coclick]
-   pip install -r requirements.txt
-   python coclick.py
-
-Claro! Aqui está a seção atualizada **🧰 Instalação e Execução**, incluindo instruções sobre como rodar o programa e configurar o arquivo `.ini` para personalizar o comportamento do CoClick:
+Agora com **interface gráfica** (painel para iniciar/parar e acompanhar as
+estatísticas) e distribuído como um **programa pronto**: seus amigos só baixam,
+extraem e abrem. Sem instalar Python, sem instalar Tesseract, sem mexer no PATH.
 
 ---
 
-## 🧰 Instalação
+## ▶️ Para usar (quem recebeu o CoClick.zip)
 
-1. **Clone o repositório:**
+1. Baixe o **CoClick.zip**.
+2. Clique com o botão direito → **Extrair tudo**.
+3. Abra a pasta `CoClick` e dê dois cliques em **`CoClick.exe`**.
+   - Se o Windows mostrar um aviso azul do SmartScreen: clique em
+     **Mais informações → Executar assim mesmo** (o programa não tem assinatura
+     digital, é normal).
+4. Na janela do CoClick:
+   - No painel **Setup**, clique em **Capture** de cada posição. Para as
+     posições de mouse, passe o cursor em cima do botão do jogo e espere a
+     contagem (`3… 2… 1…`). Para a **área de leitura (OCR)**, arraste um
+     retângulo por cima dos números de recursos.
+   - Ajuste **ouro / elixir / elixir negro** mínimos e a **estratégia (star)**.
+   - Clique em **Salvar**.
+5. Clique em **▶ Start**. Acompanhe o status, as estatísticas e o log ao vivo.
+   Clique em **■ Stop** para parar (ele termina o ataque atual antes de parar).
 
-   ```bash
-   git clone https://github.com/seuusuario/coclick.git
-   cd coclick
-   ```
+As configurações ficam salvas no `config.ini`, ao lado do `CoClick.exe`.
 
-2. **Instale as dependências:**
+### Estratégia (`star`)
 
-   Crie um ambiente virtual (opcional, mas recomendado):
-
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate   # No Windows
-   source venv/bin/activate  # No Linux/Mac
-   ```
-
-   E instale os requisitos:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
+| Valor | Comportamento                                                        |
+| ----- | ------------------------------------------------------------------- |
+| `1`   | Ataca para destruir o máximo — **mantém/ganha troféus**.            |
+| `2`   | Foco em recursos, com alguns ataques curtos (perde troféu às vezes). |
+| `3`   | Sempre ataques curtos — **prioriza perder troféus** (baixar ranking).|
 
 ---
 
-## ▶️ Como executar
+## 🛠️ Para gerar o executável (quem desenvolve)
 
-Execute o programa principal com:
+Requisitos: **Python** instalado (com PATH) e **Windows**.
 
-```bash
-python ANCR.py
+```powershell
+# rodar direto do código-fonte
+pip install -r requirements.txt
+python main.py
 ```
 
+Para gerar o `CoClick.zip` que você distribui:
+
+1. **(Opcional, mas recomendado) empacotar o Tesseract junto** — assim quem
+   receber não precisa instalar nada. Veja `vendor\tesseract\README.txt` e
+   copie o Tesseract para essa pasta. Se você pular esta etapa, o `.exe`
+   precisará de um Tesseract instalado no sistema.
+
+2. Rode o build:
+
+   ```powershell
+   .\build.ps1
+   ```
+
+   Isso instala o PyInstaller, empacota tudo (onedir) usando o `build.spec` e
+   gera **`dist\CoClick.zip`** — é esse arquivo que você envia para os amigos.
+
 ---
 
-## ⚙️ Arquivo de Configuração `.ini`
+## 📂 Estrutura do projeto
 
-Você pode personalizar o comportamento dos ataques editando o arquivo `config.ini`, que será gerado após o mapeamento inicial das posições. Na seção `[Ataque]`, os seguintes parâmetros podem ser ajustados:
-
-```ini
-[Ataque]
-gold = 500000
-elixir = 500000
-blackelixir = 0
-star = 2
-```
-
-### Explicação dos parâmetros:
-
-| Parâmetro     | Função                                                          |
-| ------------- | --------------------------------------------------------------- |
-| `gold`        | Valor mínimo de ouro necessário para iniciar um ataque.         |
-| `elixir`      | Valor mínimo de elixir necessário para iniciar um ataque.       |
-| `blackelixir` | Valor mínimo de elixir negro necessário para iniciar um ataque. |
-| `star`        | Estratégia de ataque (detalhada abaixo).                        |
-
-### Valores possíveis para `star`:
-
-* `1` – Ataca **pra destruir o máximo** para obter recursos e **ganhar troféus**.
-* `2` – Ataca focando em recursos, **mas faz alguns ataques curtos para perder troféu ocasionalmente**.
-* `3` – Ataca **sempre com ataques curtos**, **priorizando perder troféus** (ideal para queda de ranking).
+| Arquivo             | Função                                                        |
+| ------------------- | ------------------------------------------------------------- |
+| `main.py`           | Ponto de entrada (abre a interface).                          |
+| `gui.py`            | Interface gráfica: painel + setup.                            |
+| `bot_engine.py`     | Motor do bot (loop de farm, OCR, ataque) + leitura/escrita do `config.ini`. |
+| `square.py`         | Overlay para selecionar a área de leitura (OCR).              |
+| `config.ini`        | Posições da tela e configurações de ataque.                  |
+| `build.spec` / `build.ps1` | Empacotamento com PyInstaller.                        |
+| `vendor/tesseract/` | Onde o Tesseract é colocado para ser empacotado.             |

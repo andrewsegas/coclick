@@ -8,9 +8,9 @@ class Quadrado:
     
     def __init__(self):
         a = 1
-    
-    def start(self):
-        self.create_rectangle()
+
+    def start(self, master=None):
+        self.create_rectangle(master)
         
     def on_button_close(self, event):
         self.root.destroy()
@@ -40,9 +40,14 @@ class Quadrado:
             self.root.destroy()
 
 
-    def create_rectangle(self):
+    def create_rectangle(self, master=None):
 
-        self.root = tk.Tk()
+        # Use a Toplevel (blocking via wait_window) when embedded in an existing
+        # tkinter app; fall back to a standalone Tk()+mainloop() when run alone.
+        if master is not None:
+            self.root = tk.Toplevel(master)
+        else:
+            self.root = tk.Tk()
         self.root.attributes('-fullscreen', True)
         self.root.attributes('-alpha', 0.1)  # Define a transparência da janela (0.0 - totalmente transparente, 1.0 - opaco)
         self.root.attributes("-topmost", True)
@@ -53,9 +58,12 @@ class Quadrado:
         canvas.bind("<ButtonPress-1>", self.on_button_press)
         canvas.bind("<ButtonRelease-1>", self.on_button_release)
         canvas.bind("<ButtonPress-3>", self.on_button_close)  # Botão direito do mouse
-        
 
-        self.root.mainloop()
+        if master is not None:
+            self.root.grab_set()
+            master.wait_window(self.root)
+        else:
+            self.root.mainloop()
 
         if self.start_x is not None and self.start_y is not None and self.end_x is not None and self.end_y is not None:
             print("Posição inicial (x, y):", self.start_x, self.start_y)
