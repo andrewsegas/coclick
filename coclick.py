@@ -104,7 +104,7 @@ def startAttack():
     pyautogui.click()
 
     pyautogui.mouseDown()
-    time.sleep(1)
+    time.sleep(4)
     pyautogui.moveTo(posicoes.get("atack2"), duration=1)  # Move o mouse para a posição final
     pyautogui.mouseUp()
     
@@ -142,8 +142,16 @@ def startAttack():
     pyautogui.click()
     pyautogui.click()
     pyautogui.click()
+    pydirectinput.press('2')
+    pyautogui.mouseDown()
+    time.sleep(4)
+    pyautogui.mouseUp()
+    pydirectinput.press('3')
+    pyautogui.mouseDown()
+    time.sleep(3)
+    pyautogui.mouseUp()
     
-    time.sleep(random.uniform(5,15))
+    time.sleep(random.uniform(5,8))
     pydirectinput.press('q')
     time.sleep(random.uniform(0,1))
     pydirectinput.press('w')
@@ -155,7 +163,7 @@ def startAttack():
     if ataque_info['star'] == 1 or (ataque_info['star'] == 2 and random.uniform(1,10) > 5):
         # entra se star 1 ou se for 2 50% das vezes
         # espera o ataque acabar 
-        time.sleep(random.uniform(45,56))
+        time.sleep(random.uniform(20,45))
     
     pyautogui.moveTo(posicoes.get("termina")[0] + round(random.uniform(-5,5)), posicoes.get("termina")[1] + round(random.uniform(-5,5)))  
     pyautogui.click()
@@ -198,7 +206,7 @@ def check_attack(ataque_info):
         vilacheck = 0
         startAttack()
         
-    elif vilacheck > 10 or ataque_info['star'] == 3:
+    elif vilacheck > 1 or ataque_info['star'] == 3:
         print("ataca de q q jeito")
         vilacheck = 0
         startAttack()
@@ -209,7 +217,7 @@ def check_attack(ataque_info):
 def click_next():
     pyautogui.click(posicoes.get("next"))
     print("proximo")
-    time.sleep(2)
+    time.sleep(5)
     ajustar_click()
     
 def ajustar_click():
