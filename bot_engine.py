@@ -1,6 +1,6 @@
 """CoClick bot engine.
 
-Contains the farming logic extracted from the original ``coclick.py`` as a
+Contains the farming logic as a
 controllable :class:`BotEngine` that runs its loop on a background thread and
 reports status/log/stats to a GUI through a thread-safe queue.
 
@@ -11,55 +11,26 @@ changes *how the loop is controlled*, not what it does.
 
 import os
 import re
-import sys
 import time
 import random
-import shutil
 import threading
 import configparser
 
 import pytesseract
-from PIL import ImageGrab
+from PIL import Image, ImageGrab, ImageOps
 import pydirectinput
 import pyautogui
 
-import square
+import notifier
 
 
 # --------------------------------------------------------------------------- #
-# Path / resource helpers (frozen exe vs. running from source)
+# Config path
 # --------------------------------------------------------------------------- #
-def resource_path(rel):
-    """Absolute path to a bundled resource, working both frozen and from source."""
-    base = getattr(sys, "_MEIPASS", os.path.abspath("."))
-    return os.path.join(base, rel)
-
-
 def config_path():
-    """Path to the writable ``config.ini``, next to the exe when frozen."""
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.abspath(".")
-    return os.path.join(base, "config.ini")
-
-
-def _configure_tesseract():
-    """Point pytesseract at the bundled Tesseract binary if present.
-
-    When frozen, ``vendor/tesseract`` is shipped as data under ``tesseract/``.
-    When running from source we fall back to the vendored folder if it exists,
-    otherwise leave pytesseract's default (a system install) untouched.
-    """
-    bundled_exe = resource_path(os.path.join("tesseract", "tesseract.exe"))
-    if os.path.exists(bundled_exe):
-        pytesseract.pytesseract.tesseract_cmd = bundled_exe
-        os.environ["TESSDATA_PREFIX"] = resource_path(
-            os.path.join("tesseract", "tessdata")
-        )
-
-
-_configure_tesseract()
+    """Path to the writable ``config.ini``, next to this file (so the bot can
+    be launched from any working directory)."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
 
 
 # --------------------------------------------------------------------------- #
@@ -84,8 +55,9 @@ def salvar_posicao(nome, posicao, arquivo=None):
         config.write(configfile)
 
 
-def save_settings(ataque=None, tempo=None, arquivo=None):
-    """Write the ``[Ataque]`` / ``[Tempo]`` sections from the GUI setup panel.
+def save_settings(ataque=None, tempo=None, notificacoes=None, parada=None, arquivo=None):
+    """Write the ``[Ataque]`` / ``[Tempo]`` / ``[Notificacoes]`` / ``[Parada]``
+    sections from the GUI setup panel.
 
     ``ataque`` / ``tempo`` are dicts of ``key -> value`` (values are stringified).
     Only the keys provided are written; existing keys are preserved/overwritten.
@@ -108,6 +80,18 @@ def save_settings(ataque=None, tempo=None, arquivo=None):
             config["Tempo"] = {}
         for key, value in tempo.items():
             config["Tempo"][key] = str(value)
+
+    if notificacoes is not None:
+        if "Notificacoes" not in config:
+            config["Notificacoes"] = {}
+        for key, value in notificacoes.items():
+            config["Notificacoes"][key] = str(value)
+
+    if parada is not None:
+        if "Parada" not in config:
+            config["Parada"] = {}
+        for key, value in parada.items():
+            config["Parada"][key] = str(value)
 
     with open(arquivo, "w") as configfile:
         config.write(configfile)
@@ -133,22 +117,22 @@ blackelixir = 0
 star = 1
 
 [Tempo]
+
+[Notificacoes]
+discord_webhook =
+
+[Parada]
+parar_cheio = 0
+cheio_ouro = 0
+cheio_elixir = 0
+cheio_modo = todos
 """
 
 
 def ensure_config():
-    """Make sure a writable ``config.ini`` exists next to the exe.
-
-    Seeds it from a bundled default (shipped as data) or, failing that, from a
-    built-in template. Returns the resolved path.
-    """
+    """Create a default ``config.ini`` on first run. Returns the path."""
     path = config_path()
-    if os.path.exists(path):
-        return path
-    default = resource_path("config.ini")
-    if os.path.exists(default) and os.path.abspath(default) != os.path.abspath(path):
-        shutil.copyfile(default, path)
-    else:
+    if not os.path.exists(path):
         with open(path, "w") as f:
             f.write(_DEFAULT_CONFIG)
     return path
@@ -207,6 +191,10 @@ class BotEngine:
         self.corrige_atack = 0
         self.posicoes = {}
         self.ataque_info = {}
+        self.notificacoes = {}
+        self.parada = {}
+        self._stop_reason = None
+        self._full_streak = 0
 
         self.stats = {
             "attacks": 0,
@@ -229,6 +217,11 @@ class BotEngine:
     def _emit_stats(self):
         self.status_queue.put(("stats", dict(self.stats)))
 
+    def _notify(self, text):
+        """Push ``text`` to the user's Discord webhook, if one is configured.
+        Async + failure-proof (see notifier.send)."""
+        notifier.send(str(self.notificacoes.get("discord_webhook", "")), text)
+
     # ---- lifecycle ---------------------------------------------------------
     def is_running(self):
         return self._thread is not None and self._thread.is_alive()
@@ -240,6 +233,10 @@ class BotEngine:
         cfg = carregar_ini()
         self.posicoes = cfg.get("Posicoes", {})
         self.ataque_info = cfg.get("Ataque", {})
+        self.notificacoes = cfg.get("Notificacoes", {})
+        self.parada = cfg.get("Parada", {})
+        self._stop_reason = None
+        self._full_streak = 0
         self.stats["start_time"] = time.time()
         self._emit_stats()
         self._start_timer()
@@ -252,19 +249,41 @@ class BotEngine:
         self._cancel_timer()
 
     def _run(self):
-        self._emit_status("Running")
-        self._log("Bot started — searching for bases to farm.", "info")
+        self._emit_status("Rodando")
+        self._log("Bot iniciado — procurando vilas para farmar.", "info")
+        try:
+            self._farm_loop()
+        except Exception as exc:
+            # Without this, the thread would die silently and whoever left the
+            # bot running would only find out hours later.
+            self._log(f"O bot parou por um erro inesperado: {exc}", "warn")
+            self._stop_reason = f"erro: {exc}"
+        finally:
+            self._log_session_summary()
+            reason = self._stop_reason or "parado pelo usuário"
+            icon = "🛑" if reason.startswith("erro") else "🔔"
+            self._notify(
+                f"{icon} CoClick parou — {reason}\n{self._session_summary_text()}"
+            )
+            self._emit_status("Parado")
+
+    def _farm_loop(self):
         self.coloca_pra_atacar()
         while not self._stop_event.is_set():
             if self._stop_event.wait(1):
                 break
-            self._log("Scanning base…", "debug")
+            self._log("Analisando vila…", "debug")
             cfg = carregar_ini()
             self.posicoes = cfg.get("Posicoes", {})
             self.ataque_info = cfg.get("Ataque", {})
+            self.notificacoes = cfg.get("Notificacoes", {})
+            self.parada = cfg.get("Parada", {})
 
             image = self.capture_screen()
             self.process_image(image)
+
+            if self._check_storages_full(image):
+                break
 
             if self.corrige_atack > 5:
                 self.coloca_pra_atacar()
@@ -275,7 +294,7 @@ class BotEngine:
                 self.corrige_atack = 0
                 self.check_attack(self.ataque_info)
             else:
-                self._log("Couldn't read loot — adjusting view and retrying.", "warn")
+                self._log("Não consegui ler o saque — ajustando a tela e tentando de novo.", "warn")
                 self.tenta_ler += 1
                 if self.tenta_ler > 2:
                     self.vilacheck += 1
@@ -284,19 +303,18 @@ class BotEngine:
                     self.tenta_ler = 0
                 self.ajustar_click()
 
-        self._log_session_summary()
-        self._emit_status("Stopped")
-
-    def _log_session_summary(self):
+    def _session_summary_text(self):
         s = self.stats
         start = s.get("start_time")
         runtime = self._format_hms(int(time.time() - start)) if start else "00:00:00"
-        self._log(
-            f"Session ended — {s['attacks']} attacks in {runtime} · "
-            f"💰 {s['gold_looted']:,} gold · 💧 {s['elixir_looted']:,} elixir · "
-            f"🖤 {s['dark_looted']:,} dark",
-            "success",
+        return (
+            f"Sessão encerrada — {s['attacks']} ataques em {runtime} · "
+            f"💰 {s['gold_looted']:,} ouro · 💧 {s['elixir_looted']:,} elixir · "
+            f"🖤 {s['dark_looted']:,} negro"
         )
+
+    def _log_session_summary(self):
+        self._log(self._session_summary_text(), "success")
 
     @staticmethod
     def _format_hms(seconds):
@@ -313,9 +331,9 @@ class BotEngine:
             segundos = minutos * 60
             self._timer = threading.Timer(segundos, self._on_timer)
             self._timer.start()
-            self._log(f"Auto-stop scheduled in {minutos:g} minutes.", "info")
+            self._log(f"Parada automática agendada em {minutos:g} minutos.", "info")
         except Exception:
-            self._log("Running with no time limit.", "debug")
+            self._log("Rodando sem limite de tempo.", "debug")
 
     def _cancel_timer(self):
         if self._timer is not None:
@@ -323,7 +341,8 @@ class BotEngine:
             self._timer = None
 
     def _on_timer(self):
-        self._log("Auto-stop timer reached — stopping after the current base.", "info")
+        self._log("Tempo limite atingido — parando depois da vila atual.", "info")
+        self._stop_reason = "tempo limite atingido"
         self.stop()
         self.status_queue.put(("shutdown", None))
 
@@ -332,40 +351,94 @@ class BotEngine:
         screenshot = ImageGrab.grab()
         return screenshot
 
-    def process_image(self, image):
-        cropped_image = image.crop(
-            (
-                self.posicoes.get("square1")[0],
-                self.posicoes.get("square1")[1],
-                self.posicoes.get("square2")[0],
-                self.posicoes.get("square2")[1],
-            )
+    @staticmethod
+    def _read_numbers(image, p1, p2):
+        """OCR the three stacked resource numbers inside the ``(p1, p2)``
+        rectangle of ``image``. Returns ``[gold, elixir, dark]`` (0 when a
+        line can't be read).
+
+        The game draws the numbers as bright text over a busy background, so
+        raw Tesseract misreads them ('5'→'S', dropped digits). Upscaling 3x
+        and keeping only bright pixels before a digits-only pass read all
+        three values correctly against real screenshots (see debug_ocr.py).
+        """
+        cropped = image.crop((p1[0], p1[1], p2[0], p2[1]))
+        prepared = ImageOps.grayscale(cropped).resize(
+            (cropped.width * 3, cropped.height * 3), Image.LANCZOS
         )
-        text = pytesseract.image_to_string(cropped_image)
-        lines = text.strip().split("\n")
-        for i in range(3):
-            if i < len(lines):
-                num_str = re.sub(r"[^\d]", "", lines[i])
-                if num_str:
-                    self.moneyWant[i] = int(num_str)
-                else:
-                    self.moneyWant[i] = 0
-            else:
-                self.moneyWant[i] = 0
+        prepared = prepared.point(lambda px: 255 if px > 170 else 0)
+        text = pytesseract.image_to_string(
+            prepared, config="--psm 6 -c tessedit_char_whitelist=0123456789 "
+        )
+        values = []
+        for line in text.strip().split("\n"):
+            num_str = re.sub(r"[^\d]", "", line)
+            if num_str:
+                values.append(int(num_str))
+        del values[3:]
+        values += [0] * (3 - len(values))
+        return values
+
+    def process_image(self, image):
+        self.moneyWant = self._read_numbers(
+            image, self.posicoes.get("square1"), self.posicoes.get("square2")
+        )
         self.stats["reads"] += 1
         self._emit_stats()
         if any(self.moneyWant):
             self._log(
-                f"Read loot — 💰 {self.moneyWant[0]:,}  💧 {self.moneyWant[1]:,}  "
+                f"Saque lido — 💰 {self.moneyWant[0]:,}  💧 {self.moneyWant[1]:,}  "
                 f"🖤 {self.moneyWant[2]:,}",
                 "debug",
             )
 
+    def _check_storages_full(self, image):
+        """Read MY resources (square3/square4 area) and stop when the
+        user-configured limits are reached. Returns True when stopping.
+
+        Requires two consecutive full readings so a single garbled OCR
+        number can't kill a whole farming session.
+        """
+        if not self.parada.get("parar_cheio"):
+            return False
+        p1 = self.posicoes.get("square3")
+        p2 = self.posicoes.get("square4")
+        if not (isinstance(p1, tuple) and isinstance(p2, tuple)):
+            return False
+
+        gold, elixir, _dark = self._read_numbers(image, p1, p2)
+        checks = []
+        for current, key in ((gold, "cheio_ouro"), (elixir, "cheio_elixir")):
+            limit = self.parada.get(key, 0)
+            if isinstance(limit, int) and limit > 0:
+                checks.append(current >= limit)
+        if not checks:
+            return False
+
+        modo = str(self.parada.get("cheio_modo", "todos"))
+        full = any(checks) if modo == "qualquer" else all(checks)
+        if not full:
+            self._full_streak = 0
+            return False
+
+        self._full_streak += 1
+        if self._full_streak < 2:
+            self._log(
+                f"Armazéns parecem cheios (💰 {gold:,} · 💧 {elixir:,}) — confirmando na próxima leitura.",
+                "info",
+            )
+            return False
+
+        self._log(f"Armazéns cheios — 💰 {gold:,} · 💧 {elixir:,}. Parando.", "success")
+        self._stop_reason = f"armazéns cheios (💰 {gold:,} · 💧 {elixir:,})"
+        self.stop()
+        return True
+
     # ---- attack sequence (verbatim timings) --------------------------------
     def startAttack(self):
         self.ajustar_click()
-        self._emit_status("Attacking")
-        self._log("Deploying troops…", "action")
+        self._emit_status("Atacando")
+        self._log("Enviando tropas…", "action")
         pydirectinput.press('1')
         pydirectinput.press('1')
 
@@ -450,8 +523,8 @@ class BotEngine:
         self.coloca_pra_atacar()
 
         self.ajustar_click()
-        self._emit_status("Running")
-        self._log(f"✔ Attack #{self.stats['attacks']} finished — searching next base.", "success")
+        self._emit_status("Rodando")
+        self._log(f"✔ Ataque #{self.stats['attacks']} concluído — procurando a próxima vila.", "success")
 
     def coloca_pra_atacar(self):
         time.sleep(random.uniform(2,3))
@@ -469,19 +542,19 @@ class BotEngine:
     def check_attack(self, ataque_info):
         # Verifica se o valor é maior
         if self.moneyWant[0] > ataque_info['gold'] and self.moneyWant[1] > ataque_info['elixir'] and self.moneyWant[2] > ataque_info['blackelixir']:
-            self._log("Base is worth it — loot above your thresholds.", "info")
+            self._log("Vila vale a pena — saque acima dos seus limites.", "info")
             self.vilacheck = 0
             self._record_attack()
             self.startAttack()
 
         elif self.vilacheck > 1 or ataque_info['star'] == 3:
-            reason = "drop-trophy mode" if ataque_info['star'] == 3 else "skip limit reached"
-            self._log(f"Attacking anyway ({reason}).", "info")
+            reason = "modo perder troféus" if ataque_info['star'] == 3 else "limite de vilas puladas"
+            self._log(f"Atacando mesmo assim ({reason}).", "info")
             self.vilacheck = 0
             self._record_attack()
             self.startAttack()
         else:
-            self._log("Skipping base — loot below your thresholds.", "info")
+            self._log("Pulando vila — saque abaixo dos seus limites.", "info")
             self.stats["villages_skipped"] += 1
             self._emit_stats()
             self.click_next()
@@ -497,19 +570,19 @@ class BotEngine:
             self.stats["stars"] += star
         self._emit_stats()
         self._log(
-            f"▶ Attack #{self.stats['attacks']} — grabbing 💰 {g:,}  💧 {e:,}  🖤 {d:,}",
+            f"▶ Ataque #{self.stats['attacks']} — pegando 💰 {g:,}  💧 {e:,}  🖤 {d:,}",
             "action",
         )
 
     def click_next(self):
         pyautogui.click(self.posicoes.get("next"))
-        self._log("Next base…", "debug")
+        self._log("Próxima vila…", "debug")
         time.sleep(5)
         self.ajustar_click()
 
     def ajustar_click(self):
         # cliica pra arrastar
-        self._log("Adjusting map view.", "debug")
+        self._log("Ajustando a visão do mapa.", "debug")
         pyautogui.moveTo(self.posicoes.get("square2"), duration=0.3)
         pyautogui.mouseDown()
         # clica pra arrastar
