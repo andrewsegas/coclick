@@ -2,14 +2,13 @@
 __pycache__/
 *.py[cod]
 
-# PyInstaller build output
-build/
-dist/
+# config.ini holds per-machine positions AND the user's Discord webhook
+# (a secret) — never commit it. It is regenerated on first run.
+config.ini
+configbkp.ini
 
-# Bundled Tesseract-OCR binaries — drop your own per vendor/tesseract/README.txt
-vendor/tesseract/*
-!vendor/tesseract/README.txt
+# debug_ocr.py output (personal screenshots)
+debug_ocr/
 
 # Local / misc
-configbkp.ini
 *.rar

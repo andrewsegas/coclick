@@ -1,2 +1,0 @@
-# Build-only dependency (not needed to run from source).
-pyinstaller
