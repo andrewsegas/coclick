@@ -392,12 +392,17 @@ class BotEngine:
                 "debug",
             )
 
+    # Os armazéns do jogo guardam no máximo ~31 milhões; qualquer leitura acima
+    # disso é erro de OCR (dígito a mais / números emendados), não um valor real.
+    MAX_ARMAZEM = 32_000_000
+
     def _check_storages_full(self, image):
         """Read MY resources (square3/square4 area) and stop when the
         user-configured limits are reached. Returns True when stopping.
 
         Requires two consecutive full readings so a single garbled OCR
-        number can't kill a whole farming session.
+        number can't kill a whole farming session, and discards impossible
+        readings (above MAX_ARMAZEM) outright.
         """
         if not self.parada.get("parar_cheio"):
             return False
@@ -407,6 +412,13 @@ class BotEngine:
             return False
 
         gold, elixir, _dark = self._read_numbers(image, p1, p2)
+        if gold > self.MAX_ARMAZEM or elixir > self.MAX_ARMAZEM:
+            self._log(
+                f"Leitura dos meus recursos descartada — 💰 {gold:,} · 💧 {elixir:,} "
+                "acima do máximo possível (erro de OCR).",
+                "debug",
+            )
+            return False
         checks = []
         for current, key in ((gold, "cheio_ouro"), (elixir, "cheio_elixir")):
             limit = self.parada.get(key, 0)
