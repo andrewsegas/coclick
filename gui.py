@@ -3,14 +3,14 @@ and tune attack thresholds. Drives :class:`bot_engine.BotEngine`."""
 
 import queue
 import time
+import threading
 import collections
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 
-import pyautogui
-
-import square
+import notifier
+from wizard import SetupWizard, POINT, RECT
 from bot_engine import (
     BotEngine,
     carregar_ini,
@@ -19,33 +19,43 @@ from bot_engine import (
     ensure_config,
 )
 
-# Friendly label + config key for every position the setup panel can capture.
-POSITION_FIELDS = [
-    ("next", "Next-village button"),
-    ("atacar", "Attack button"),
-    ("procurar", "Search button"),
-    ("exercitoatacar", "Select-troops button"),
-    ("atack", "Attack drag START"),
-    ("atack2", "Attack drag END"),
-    ("termina", "End-attack button"),
-    ("ok", "OK button"),
-    ("voltar", "Back button"),
+# Every step the setup wizard captures, IN ORDER:
+#   ("point", config_key, label)  or  ("rect", (tl_key, br_key), label)
+WIZARD_STEPS = [
+    ("point", "atacar", "Botão ATACAR (na vila)"),
+    ("point", "procurar", "Botão PROCURAR vila"),
+    ("point", "exercitoatacar", "Botão BATALHA (escolher tropas)"),
+    ("rect", ("square1", "square2"), "Área do saque do INIMIGO (OCR)"),
+    ("point", "next", "Botão PRÓXIMA vila (Next)"),
+    ("point", "atack", "INÍCIO do arrasto do ataque"),
+    ("point", "atack2", "FIM do arrasto do ataque"),
+    ("point", "termina", "Botão RENDER"),
+    ("point", "ok", "Botão OK (fim da batalha)"),
+    ("point", "voltar", "Botão VOLTAR para casa"),
+    ("rect", ("square3", "square4"), "Área dos MEUS recursos (OCR)"),
 ]
+
+# Derived views of WIZARD_STEPS.
+POSITION_FIELDS = [(s[1], s[2]) for s in WIZARD_STEPS if s[0] == "point"]
+OCR_AREAS = [(s[1][0], s[1][1], s[2]) for s in WIZARD_STEPS if s[0] == "rect"]
+
+FULL_MODE_ALL = "todos os limites atingidos"
+FULL_MODE_ANY = "qualquer limite atingido"
 
 STAT_ROWS = [
     ("status", "Status"),
-    ("runtime", "Runtime"),
-    ("attacks", "Attacks"),
-    ("villages_skipped", "Skipped"),
-    ("stars", "Stars"),
-    ("last_read", "Last read (G/E/D)"),
+    ("runtime", "Tempo"),
+    ("attacks", "Ataques"),
+    ("villages_skipped", "Puladas"),
+    ("stars", "Estrelas"),
+    ("last_read", "Última leitura (O/E/N)"),
 ]
 
 # Loot tiles: (stat key, emoji, title, accent color)
 LOOT_TILES = [
-    ("gold_looted", "💰", "Gold", "#C9A227"),
+    ("gold_looted", "💰", "Ouro", "#C9A227"),
     ("elixir_looted", "💧", "Elixir", "#B23A9A"),
-    ("dark_looted", "🖤", "Dark elixir", "#444444"),
+    ("dark_looted", "🖤", "Elixir negro", "#444444"),
 ]
 
 # Log level -> colour. "debug" lines are hidden unless "Show details" is on.
@@ -70,7 +80,7 @@ class App:
         self._log_entries = collections.deque(maxlen=MAX_LOG_LINES)
 
         self.root = tk.Tk()
-        self.root.title("CoClick — Clash of Clans Farm Bot")
+        self.root.title("CoClick — Bot de farm para Clash of Clans")
         self.root.minsize(880, 620)
 
         self.show_debug = tk.BooleanVar(value=False)
@@ -85,24 +95,31 @@ class App:
 
     # ------------------------------------------------------------------ UI --
     def _build_ui(self):
-        container = ttk.Frame(self.root, padding=8)
-        container.pack(fill=tk.BOTH, expand=True)
-        container.columnconfigure(0, weight=3, uniform="col")
-        container.columnconfigure(1, weight=2, uniform="col")
-        container.rowconfigure(0, weight=1)
+        self.container = ttk.Frame(self.root, padding=8)
+        self.container.pack(fill=tk.BOTH, expand=True)
+        self.container.columnconfigure(0, weight=3, uniform="col")
+        self.container.columnconfigure(1, weight=2, uniform="col")
+        self.container.rowconfigure(0, weight=1)
 
-        self._build_dashboard(container)
-        self._build_setup(container)
+        self._build_dashboard(self.container)
+        self._build_setup(self.container)
+        self._setup_visible = True
 
     def _build_dashboard(self, parent):
-        frame = ttk.LabelFrame(parent, text="Dashboard", padding=8)
+        frame = ttk.LabelFrame(parent, text="Painel", padding=8)
         frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(4, weight=1)
 
-        # Start/Stop toggle
-        self.toggle_btn = ttk.Button(frame, text="▶  Start", command=self._toggle)
-        self.toggle_btn.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        # Start/Stop toggle + show/hide settings
+        top = ttk.Frame(frame)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top.columnconfigure(0, weight=1)
+        self.toggle_btn = ttk.Button(top, text="▶  Iniciar", command=self._toggle)
+        self.toggle_btn.grid(row=0, column=0, sticky="ew")
+        self.settings_btn = ttk.Button(top, text="⚙  Esconder", width=12,
+                                       command=self._toggle_setup)
+        self.settings_btn.grid(row=0, column=1, padx=(6, 0))
 
         # --- Loot tiles (the headline numbers) ---
         loot = ttk.Frame(frame)
@@ -139,17 +156,17 @@ class App:
             var = tk.StringVar(value="—")
             self.stat_vars[key] = var
             ttk.Label(cell, textvariable=var, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 0))
-        self.stat_vars["status"].set("Idle")
+        self.stat_vars["status"].set("Aguardando")
 
         # --- Log header + details toggle ---
         header = ttk.Frame(frame)
         header.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Activity log", font=("Segoe UI", 9, "bold")).grid(
+        ttk.Label(header, text="Log de atividade", font=("Segoe UI", 9, "bold")).grid(
             row=0, column=0, sticky="w")
-        ttk.Checkbutton(header, text="Show details", variable=self.show_debug,
+        ttk.Checkbutton(header, text="Mostrar detalhes", variable=self.show_debug,
                         command=self._rerender_log).grid(row=0, column=1, sticky="e")
-        ttk.Button(header, text="Clear", width=6, command=self._clear_log).grid(
+        ttk.Button(header, text="Limpar", width=7, command=self._clear_log).grid(
             row=0, column=2, sticky="e", padx=(6, 0))
 
         # --- Log ---
@@ -161,38 +178,53 @@ class App:
             self.log.tag_configure(level, foreground=color)
 
     def _build_setup(self, parent):
-        frame = ttk.LabelFrame(parent, text="Setup", padding=8)
+        frame = ttk.LabelFrame(parent, text="Configuração", padding=8)
         frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
         frame.columnconfigure(0, weight=1)
+        self.setup_frame = frame
 
         # --- Positions ---
-        pos = ttk.LabelFrame(frame, text="Screen positions", padding=6)
+        pos = ttk.LabelFrame(frame, text="Posições na tela", padding=6)
         pos.grid(row=0, column=0, sticky="ew")
-        pos.columnconfigure(2, weight=1)
+        pos.columnconfigure(0, weight=1)
 
-        self.capture_status = tk.StringVar(value="Hover the game, then click Capture.")
+        ttk.Button(pos, text="⚙  Configurar todas as posições (assistente)",
+                   command=self._run_full_wizard).grid(
+            row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+
+        self.recapture_var = tk.StringVar()
+        step_names = [s[2] for s in WIZARD_STEPS]
+        ttk.Combobox(pos, textvariable=self.recapture_var, state="readonly",
+                     values=step_names).grid(row=1, column=0, sticky="ew", pady=1)
+        ttk.Button(pos, text="Recapturar", width=11,
+                   command=self._recapture_selected).grid(
+            row=1, column=1, padx=(4, 0), pady=1)
+
+        vals = ttk.Frame(pos)
+        vals.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        vals.columnconfigure(1, weight=1)
+        self.pos_labels = {}
+        value_rows = []
+        area_i = 0
+        for kind, key, label in WIZARD_STEPS:
+            if kind == "point":
+                value_rows.append((key, label))
+            else:
+                value_rows.append((f"_area{area_i}", label))
+                area_i += 1
+        for r, (key, friendly) in enumerate(value_rows):
+            ttk.Label(vals, text=friendly, foreground="#666").grid(row=r, column=0, sticky="w")
+            var = tk.StringVar(value="")
+            self.pos_labels[key] = var
+            ttk.Label(vals, textvariable=var, foreground="#666").grid(row=r, column=1, sticky="e")
+
+        self.capture_status = tk.StringVar(
+            value="Assistente: aponte o mouse para cada botão do jogo e aperte ESPAÇO.")
         ttk.Label(frame, textvariable=self.capture_status, foreground="#0a6").grid(
             row=1, column=0, sticky="w", pady=(4, 8))
 
-        ttk.Label(pos, text="Reading area (OCR)").grid(row=0, column=0, sticky="w", pady=1)
-        ttk.Button(pos, text="Capture", width=9,
-                   command=self._capture_ocr_area).grid(row=0, column=1, padx=4, pady=1)
-        self.pos_labels = {}
-        ocr_val = tk.StringVar(value="")
-        self.pos_labels["_ocr"] = ocr_val
-        ttk.Label(pos, textvariable=ocr_val, foreground="#666").grid(row=0, column=2, sticky="w")
-
-        for i, (key, friendly) in enumerate(POSITION_FIELDS, start=1):
-            ttk.Label(pos, text=friendly).grid(row=i, column=0, sticky="w", pady=1)
-            ttk.Button(pos, text="Capture", width=9,
-                       command=lambda k=key, f=friendly: self._capture_position(k, f)
-                       ).grid(row=i, column=1, padx=4, pady=1)
-            val = tk.StringVar(value="")
-            self.pos_labels[key] = val
-            ttk.Label(pos, textvariable=val, foreground="#666").grid(row=i, column=2, sticky="w")
-
         # --- Attack settings ---
-        atk = ttk.LabelFrame(frame, text="Attack settings", padding=6)
+        atk = ttk.LabelFrame(frame, text="Configurações de ataque", padding=6)
         atk.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         atk.columnconfigure(1, weight=1)
 
@@ -204,29 +236,72 @@ class App:
 
         vcmd = (self.root.register(self._validate_int), "%P")
         rows = [
-            ("Min gold", self.gold_var),
-            ("Min elixir", self.elixir_var),
-            ("Min dark elixir", self.dark_var),
+            ("Ouro mínimo", self.gold_var),
+            ("Elixir mínimo", self.elixir_var),
+            ("Elixir negro mínimo", self.dark_var),
         ]
         for i, (label, var) in enumerate(rows):
             ttk.Label(atk, text=label).grid(row=i, column=0, sticky="w", pady=2)
             ttk.Entry(atk, textvariable=var, validate="key", validatecommand=vcmd,
                       width=14).grid(row=i, column=1, sticky="w", pady=2)
 
-        ttk.Label(atk, text="Strategy (star)").grid(row=3, column=0, sticky="w", pady=2)
+        ttk.Label(atk, text="Estratégia (star)").grid(row=3, column=0, sticky="w", pady=2)
         ttk.Combobox(atk, textvariable=self.star_var, width=12, state="readonly",
                      values=("1", "2", "3")).grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Label(atk, text="1 = keep trophies · 2 = mixed · 3 = drop trophies",
+        ttk.Label(atk, text="1 = mantém troféus · 2 = misto · 3 = perde troféus",
                   foreground="#888").grid(row=4, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(atk, text="Auto-stop after (min)").grid(row=5, column=0, sticky="w", pady=(6, 2))
+        ttk.Label(atk, text="Parar sozinho após (min)").grid(row=5, column=0, sticky="w", pady=(6, 2))
         ttk.Entry(atk, textvariable=self.minutes_var, width=14).grid(
             row=5, column=1, sticky="w", pady=(6, 2))
-        ttk.Label(atk, text="(leave blank for unlimited)", foreground="#888").grid(
+        ttk.Label(atk, text="(vazio = sem limite de tempo)", foreground="#888").grid(
             row=6, column=0, columnspan=2, sticky="w")
 
-        ttk.Button(frame, text="💾  Save settings", command=self._save_settings).grid(
-            row=3, column=0, sticky="ew", pady=(10, 0))
+        # --- Auto-stop when storages are full ---
+        full = ttk.LabelFrame(frame, text="Parada automática (armazéns cheios)", padding=6)
+        full.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        full.columnconfigure(1, weight=1)
+
+        self.full_stop_var = tk.BooleanVar(value=False)
+        self.full_gold_var = tk.StringVar()
+        self.full_elixir_var = tk.StringVar()
+        self.full_mode_var = tk.StringVar(value=FULL_MODE_ALL)
+
+        ttk.Checkbutton(full, text="Parar quando meus armazéns encherem",
+                        variable=self.full_stop_var).grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(full, text="Limite de ouro").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(full, textvariable=self.full_gold_var, validate="key",
+                  validatecommand=vcmd, width=14).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(full, text="Limite de elixir").grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Entry(full, textvariable=self.full_elixir_var, validate="key",
+                  validatecommand=vcmd, width=14).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(full, text="Parar quando").grid(row=3, column=0, sticky="w", pady=2)
+        ttk.Combobox(full, textvariable=self.full_mode_var, state="readonly", width=22,
+                     values=(FULL_MODE_ALL, FULL_MODE_ANY)).grid(
+            row=3, column=1, sticky="w", pady=2)
+        ttk.Label(full,
+                  text="Lê os SEUS recursos na 'Área dos MEUS recursos (OCR)'.\n"
+                       "Limite vazio/0 = ignora aquele recurso.",
+                  foreground="#888").grid(row=4, column=0, columnspan=2, sticky="w")
+
+        # --- Discord notifications ---
+        notif = ttk.LabelFrame(frame, text="Notificações no Discord", padding=6)
+        notif.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        notif.columnconfigure(1, weight=1)
+
+        self.webhook_var = tk.StringVar()
+
+        ttk.Label(notif, text="URL do webhook").grid(row=0, column=0, sticky="w", pady=2)
+        ttk.Entry(notif, textvariable=self.webhook_var).grid(
+            row=0, column=1, sticky="ew", pady=2)
+        ttk.Button(notif, text="Testar", width=9, command=self._test_webhook).grid(
+            row=0, column=2, sticky="e", padx=(4, 0), pady=2)
+        ttk.Label(notif, text="Uma mensagem quando o bot parar (motivo + resumo da sessão).",
+                  foreground="#888").grid(row=1, column=0, columnspan=3, sticky="w")
+
+        ttk.Button(frame, text="💾  Salvar configurações", command=self._save_settings).grid(
+            row=5, column=0, sticky="ew", pady=(10, 0))
 
     # -------------------------------------------------------------- helpers --
     @staticmethod
@@ -255,57 +330,100 @@ class App:
         self.star_var.set(str(atk.get("star", "1")))
         tempo = cfg.get("Tempo", {})
         self.minutes_var.set(str(tempo.get("desligar_em_minutos", "")))
+        notif = cfg.get("Notificacoes", {})
+        self.webhook_var.set(str(notif.get("discord_webhook", "")))
+        parada = cfg.get("Parada", {})
+        self.full_stop_var.set(bool(parada.get("parar_cheio", 0)))
+        gold_lim = parada.get("cheio_ouro", 0)
+        elixir_lim = parada.get("cheio_elixir", 0)
+        self.full_gold_var.set(str(gold_lim) if gold_lim else "")
+        self.full_elixir_var.set(str(elixir_lim) if elixir_lim else "")
+        self.full_mode_var.set(
+            FULL_MODE_ANY if str(parada.get("cheio_modo", "todos")) == "qualquer"
+            else FULL_MODE_ALL)
 
     def _refresh_position_labels(self):
         cfg = carregar_ini()
         pos = cfg.get("Posicoes", {})
-        for key, var in self.pos_labels.items():
-            if key == "_ocr":
-                s1, s2 = pos.get("square1"), pos.get("square2")
-                var.set(f"{s1} → {s2}" if s1 and s2 else "not set")
-            else:
-                v = pos.get(key)
-                var.set(str(v) if v else "not set")
+        for key, _friendly in POSITION_FIELDS:
+            v = pos.get(key)
+            self.pos_labels[key].set(str(v) if v else "não definido")
+        for i, (k1, k2, _label) in enumerate(OCR_AREAS):
+            a, b = pos.get(k1), pos.get(k2)
+            self.pos_labels[f"_area{i}"].set(f"{a} → {b}" if a and b else "não definida")
 
     # ------------------------------------------------------------- actions --
+    def _toggle_setup(self):
+        if self._setup_visible:
+            self.setup_frame.grid_remove()
+            self.container.columnconfigure(1, weight=0, uniform="")
+            self.settings_btn.config(text="⚙  Configurar")
+        else:
+            self.container.columnconfigure(1, weight=2, uniform="col")
+            self.setup_frame.grid()
+            self.settings_btn.config(text="⚙  Esconder")
+        self._setup_visible = not self._setup_visible
+
     def _toggle(self):
         if self.engine.is_running():
-            self.toggle_btn.config(text="Stopping…", state="disabled")
-            self.stat_vars["status"].set("Stopping…")
+            self.toggle_btn.config(text="Parando…", state="disabled")
+            self.stat_vars["status"].set("Parando…")
             self.engine.stop()
         else:
-            self.toggle_btn.config(text="■  Stop")
-            self.stat_vars["status"].set("Running")
+            self.toggle_btn.config(text="■  Parar")
+            self.stat_vars["status"].set("Rodando")
             self.engine.start()
 
-    def _capture_position(self, key, friendly):
-        if self.engine.is_running():
-            messagebox.showinfo("Busy", "Stop the bot before changing positions.")
-            return
-        self._countdown(3, key, friendly)
+    def _wizard_steps(self, only=None):
+        """Build the wizard step list; ``only`` narrows it to one friendly label."""
+        steps = []
+        for kind, key, label in WIZARD_STEPS:
+            if only is not None and only != label:
+                continue
+            if kind == "point":
+                steps.append({
+                    "kind": POINT, "label": label,
+                    "save": lambda p, k=key: salvar_posicao(k, p),
+                })
+            else:
+                k1, k2 = key
+                steps.append({
+                    "kind": RECT, "label": label,
+                    "save": lambda r, a=k1, b=k2: (
+                        salvar_posicao(a, (r[0], r[1])),
+                        salvar_posicao(b, (r[2], r[3])),
+                    ),
+                })
+        return steps
 
-    def _countdown(self, n, key, friendly):
-        if n > 0:
-            self.capture_status.set(f"Move mouse to '{friendly}' — capturing in {n}…")
-            self.root.after(1000, lambda: self._countdown(n - 1, key, friendly))
-        else:
-            pos = pyautogui.position()
-            salvar_posicao(key, (pos[0], pos[1]))
-            self.capture_status.set(f"Saved '{friendly}' at {pos[0]},{pos[1]}")
-            self._refresh_position_labels()
+    def _run_full_wizard(self):
+        self._run_wizard(self._wizard_steps())
 
-    def _capture_ocr_area(self):
-        if self.engine.is_running():
-            messagebox.showinfo("Busy", "Stop the bot before changing positions.")
+    def _recapture_selected(self):
+        selected = self.recapture_var.get()
+        if not selected:
+            messagebox.showinfo("Recapturar", "Escolha uma posição na lista primeiro.")
             return
-        self.capture_status.set("Drag a rectangle over the resource numbers…")
+        self._run_wizard(self._wizard_steps(only=selected))
+
+    def _run_wizard(self, steps):
+        if self.engine.is_running():
+            messagebox.showinfo("Ocupado", "Pare o bot antes de mudar as posições.")
+            return
+        # Get the CoClick window out of the way so the game stays visible.
+        self.root.iconify()
         self.root.update_idletasks()
-        area = square.Quadrado()
-        area.start(master=self.root)
-        salvar_posicao("square1", (area.start_x, area.start_y))
-        salvar_posicao("square2", (area.end_x, area.end_y))
-        self.capture_status.set("Saved OCR reading area.")
+        try:
+            wiz = SetupWizard(self.root, steps).run()
+        finally:
+            self.root.deiconify()
         self._refresh_position_labels()
+        if wiz.cancelled:
+            self.capture_status.set(
+                f"Assistente cancelado — {wiz.completed} passo(s) ficaram salvos.")
+        else:
+            self.capture_status.set(
+                f"Pronto — {wiz.completed} de {len(steps)} passo(s) capturados.")
 
     def _save_settings(self):
         ataque = {
@@ -316,9 +434,43 @@ class App:
         }
         minutes = self.minutes_var.get().strip()
         tempo = {"desligar_em_minutos": minutes if minutes else ""}
-        save_settings(ataque=ataque, tempo=tempo)
-        self.capture_status.set("Settings saved.")
-        messagebox.showinfo("Saved", "Attack settings saved to config.ini.")
+        notificacoes = {"discord_webhook": self.webhook_var.get().strip()}
+        parada = {
+            "parar_cheio": "1" if self.full_stop_var.get() else "0",
+            "cheio_ouro": self.full_gold_var.get().strip() or "0",
+            "cheio_elixir": self.full_elixir_var.get().strip() or "0",
+            "cheio_modo": "qualquer" if self.full_mode_var.get() == FULL_MODE_ANY
+                          else "todos",
+        }
+        save_settings(ataque=ataque, tempo=tempo, notificacoes=notificacoes,
+                      parada=parada)
+        self.capture_status.set("Configurações salvas.")
+        messagebox.showinfo("Salvo", "Configurações salvas no config.ini.")
+
+    def _test_webhook(self):
+        url = self.webhook_var.get().strip()
+        if not url:
+            messagebox.showinfo(
+                "Discord",
+                "Cole a URL do seu webhook do Discord primeiro.\n"
+                "(Canal → Editar → Integrações → Webhooks → Novo webhook → Copiar URL)",
+            )
+            return
+        self.capture_status.set("Enviando notificação de teste…")
+
+        def worker():
+            error = notifier.send_test(url)
+            self.root.after(0, lambda: self._test_webhook_done(error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _test_webhook_done(self, error):
+        if error is None:
+            self.capture_status.set("Notificação de teste enviada — confira o Discord!")
+            messagebox.showinfo("Discord", "Enviada! Confira o seu canal do Discord.")
+        else:
+            self.capture_status.set("A notificação de teste falhou.")
+            messagebox.showerror("Discord", f"Não foi possível enviar a notificação:\n{error}")
 
     # --------------------------------------------------------- queue drain --
     def _drain_queue(self):
@@ -330,12 +482,12 @@ class App:
                     self._add_log(level, text)
                 elif kind == "status":
                     self.stat_vars["status"].set(payload)
-                    if payload == "Stopped":
+                    if payload == "Parado":
                         self._on_stopped()
                 elif kind == "stats":
                     self._update_stats(payload)
                 elif kind == "shutdown":
-                    self._add_log("warn", "Auto-stop timer fired.")
+                    self._add_log("warn", "O tempo limite foi atingido.")
         except queue.Empty:
             pass
         self.root.after(200, self._drain_queue)
@@ -403,12 +555,12 @@ class App:
         self.root.after(1000, self._tick_runtime)
 
     def _on_stopped(self):
-        self.toggle_btn.config(text="▶  Start", state="normal")
-        self.stat_vars["status"].set("Stopped")
+        self.toggle_btn.config(text="▶  Iniciar", state="normal")
+        self.stat_vars["status"].set("Parado")
 
     def _on_close(self):
         if self.engine.is_running():
-            if not messagebox.askokcancel("Quit", "The bot is running. Stop and quit?"):
+            if not messagebox.askokcancel("Sair", "O bot está rodando. Parar e sair?"):
                 return
             self.engine.stop()
         self.root.destroy()
