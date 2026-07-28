@@ -10,5 +10,9 @@ configbkp.ini
 # debug_ocr.py output (personal screenshots)
 debug_ocr/
 
+# Ferramentas de admin (só o Andrews): geram/validam licenças.
+gerar_chave.py
+servidor_licencas/
+
 # Local / misc
 *.rar

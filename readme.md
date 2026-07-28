@@ -30,6 +30,23 @@ estatísticas, e pode te avisar pelo **Discord** enquanto roda.
 python main.py
 ```
 
+### 🔑 Ativação
+
+Na primeira execução o CoClick pede uma **chave de licença**
+(`COCLICK-XXXX-XXXX-XXXX`) — peça a sua ao Andrews. A chave é validada pela
+internet e fica **vinculada ao seu computador**: se aparecer "já está em uso em
+outro computador" (por exemplo, você trocou de PC), fale com o Andrews para
+desvincular. Depois de ativado, o bot funciona por até **3 dias sem internet**;
+passado isso ele revalida sozinho na próxima abertura com conexão.
+
+### ⬇️ Atualizações
+
+O CoClick avisa quando há uma versão nova e se atualiza sozinho: ao abrir, ele
+checa o GitHub e, se houver novidade, o botão vira **⬇ Atualizar (novo!)**.
+Clique nele para baixar a última versão e reiniciar automaticamente — suas
+configurações (o `config.ini`) são preservadas. Não precisa mais baixar o ZIP
+manualmente.
+
 Na janela do CoClick:
 
 1. Com o jogo aberto, clique em **⚙ Configure all positions (wizard)**. Uma
@@ -101,8 +118,10 @@ cheios, tempo limite, parado pelo usuário ou 🛑 erro — e o resumo da sessã
 | `bot_engine.py` | Motor do bot (loop de farm, OCR, ataque) + leitura/escrita do `config.ini`. |
 | `wizard.py`     | Assistente de setup: captura posições/áreas com a tecla Espaço.     |
 | `notifier.py`   | Envio de notificações para o webhook do Discord.                    |
+| `licenca.py`    | Ativação/validação da chave de licença (vinculada ao PC).           |
+| `updater.py`    | Botão "Atualizar": baixa a versão nova do GitHub e reinicia.         |
 | `debug_ocr.py`  | Diagnóstico do OCR (veja abaixo).                                   |
-| `config.ini`    | Gerado no primeiro uso: posições da tela, limites e webhook.        |
+| `config.ini`    | Gerado no primeiro uso: posições da tela, limites, webhook e licença. |
 
 ## 🔍 O bot não está lendo os números?
 

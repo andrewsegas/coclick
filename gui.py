@@ -9,7 +9,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 
+import licenca
 import notifier
+import updater
 from wizard import SetupWizard, POINT, RECT
 from bot_engine import (
     BotEngine,
@@ -83,6 +85,10 @@ class App:
         self.root.title("CoClick — Bot de farm para Clash of Clans")
         self.root.minsize(880, 620)
 
+        if not self._checar_licenca():
+            self.root.destroy()
+            raise SystemExit(0)
+
         self.show_debug = tk.BooleanVar(value=False)
 
         self._build_ui()
@@ -92,6 +98,131 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(200, self._drain_queue)
         self.root.after(1000, self._tick_runtime)
+
+        # Checa se há versão nova no GitHub, em segundo plano (via a fila).
+        threading.Thread(target=self._checar_update_bg, daemon=True).start()
+
+    # ---------------------------------------------------------- Atualização --
+    def _checar_update_bg(self):
+        try:
+            tem, _sha = updater.ha_atualizacao()
+        except Exception:
+            return
+        if tem:
+            self.queue.put(("update_disponivel", None))
+
+    def _atualizar(self):
+        """Baixa a versão nova do GitHub e reinicia o app."""
+        if self.engine.is_running():
+            if not messagebox.askokcancel(
+                "Atualizar", "O bot está rodando. Parar e atualizar?"
+            ):
+                return
+            self.engine.stop()
+        if not messagebox.askokcancel(
+            "Atualizar",
+            "Baixar a última versão do GitHub e reiniciar o CoClick?\n"
+            "Suas configurações são mantidas.",
+        ):
+            return
+
+        self.update_btn.config(state="disabled", text="Baixando…")
+
+        def worker():
+            resultado = updater.baixar_e_aplicar()
+            self.queue.put(("update_pronto", resultado))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ------------------------------------------------------------- Licença --
+    def _checar_licenca(self):
+        """Gate de licença no boot. False = usuário cancelou (app não abre)."""
+        estado, chave = licenca.verificar_cache()
+        if estado == "valido":
+            # Revalida em segundo plano; o resultado só afeta a próxima abertura.
+            threading.Thread(target=licenca.revalidar_silenciosa, daemon=True).start()
+            return True
+        return self._dialogo_ativacao(chave)
+
+    def _dialogo_ativacao(self, chave_atual=""):
+        """Diálogo modal pedindo a chave; valida online sem congelar a janela."""
+        self.root.withdraw()
+        resultado = {"ok": False}
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("CoClick — Ativação")
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+
+        frame = ttk.Frame(dlg, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Digite a chave de licença que você recebeu:").pack(anchor="w")
+        var_chave = tk.StringVar(value=chave_atual)
+        entry = ttk.Entry(frame, textvariable=var_chave, width=34, font=("Consolas", 11))
+        entry.pack(pady=(6, 2), fill=tk.X)
+        status = ttk.Label(frame, text="", foreground="#e37400", wraplength=340, justify="left")
+        status.pack(anchor="w", pady=(4, 0))
+        if chave_atual:
+            status.config(
+                text="Preciso confirmar sua licença online.\n"
+                "Verifique sua conexão e clique em Ativar."
+            )
+
+        botoes = ttk.Frame(frame)
+        botoes.pack(fill=tk.X, pady=(12, 0))
+
+        def _concluir(motivo):
+            if not dlg.winfo_exists():
+                return
+            if motivo == "":
+                resultado["ok"] = True
+                dlg.destroy()
+            else:
+                btn_ativar.config(state=tk.NORMAL)
+                status.config(text=licenca.MENSAGENS.get(motivo, motivo))
+
+        def _ativar():
+            chave = var_chave.get().strip().upper()
+            if not chave:
+                status.config(text="Digite a chave.")
+                return
+            btn_ativar.config(state=tk.DISABLED)
+            status.config(text="Validando...")
+
+            # A thread só guarda o resultado; quem mexe no Tkinter é a thread
+            # principal (o mainloop ainda não começou, mas wait_window roda um
+            # loop local de eventos que processa este after).
+            pendente = {}
+
+            def _worker():
+                pendente["motivo"] = licenca.ativar(chave)
+
+            def _checar():
+                if "motivo" in pendente:
+                    _concluir(pendente["motivo"])
+                elif dlg.winfo_exists():
+                    dlg.after(100, _checar)
+
+            threading.Thread(target=_worker, daemon=True).start()
+            dlg.after(100, _checar)
+
+        btn_ativar = ttk.Button(botoes, text="Ativar", command=_ativar)
+        btn_ativar.pack(side=tk.RIGHT)
+        ttk.Button(botoes, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT, padx=(0, 8))
+
+        entry.bind("<Return>", lambda _e: _ativar())
+        entry.focus_set()
+
+        dlg.update_idletasks()
+        x = (dlg.winfo_screenwidth() - dlg.winfo_reqwidth()) // 2
+        y = (dlg.winfo_screenheight() - dlg.winfo_reqheight()) // 3
+        dlg.geometry(f"+{x}+{y}")
+
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+        if resultado["ok"]:
+            self.root.deiconify()
+        return resultado["ok"]
 
     # ------------------------------------------------------------------ UI --
     def _build_ui(self):
@@ -120,6 +251,9 @@ class App:
         self.settings_btn = ttk.Button(top, text="⚙  Esconder", width=12,
                                        command=self._toggle_setup)
         self.settings_btn.grid(row=0, column=1, padx=(6, 0))
+        self.update_btn = ttk.Button(top, text="⬇  Atualizar", width=12,
+                                     command=self._atualizar)
+        self.update_btn.grid(row=0, column=2, padx=(6, 0))
 
         # --- Loot tiles (the headline numbers) ---
         loot = ttk.Frame(frame)
@@ -488,9 +622,31 @@ class App:
                     self._update_stats(payload)
                 elif kind == "shutdown":
                     self._add_log("warn", "O tempo limite foi atingido.")
+                elif kind == "update_disponivel":
+                    self.update_btn.config(text="⬇  Atualizar (novo!)")
+                    self._add_log(
+                        "success",
+                        "Há uma versão nova do CoClick! Clique em Atualizar.",
+                    )
+                elif kind == "update_pronto":
+                    self._on_update_pronto(payload)
         except queue.Empty:
             pass
         self.root.after(200, self._drain_queue)
+
+    def _on_update_pronto(self, resultado):
+        ok, msg = resultado
+        if ok:
+            messagebox.showinfo(
+                "Atualizado", "CoClick atualizado! O programa vai reiniciar."
+            )
+            updater.reiniciar_app()
+            if self.engine.is_running():
+                self.engine.stop()
+            self.root.destroy()
+            raise SystemExit(0)
+        self.update_btn.config(state="normal", text="⬇  Atualizar")
+        messagebox.showerror("Atualizar", msg)
 
     # ------------------------------------------------------------- logging --
     def _add_log(self, level, text):
