@@ -11,6 +11,7 @@ changes *how the loop is controlled*, not what it does.
 
 import os
 import re
+import math
 import time
 import random
 import threading
@@ -396,6 +397,25 @@ class BotEngine:
     # disso é erro de OCR (dígito a mais / números emendados), não um valor real.
     MAX_ARMAZEM = 32_000_000
 
+    # Deploy espalhado: em vez de um único arraste fixo atack->atack2 (que às
+    # vezes cai sobre muro/construção), largamos as tropas em várias linhas
+    # paralelas deslocadas perpendicularmente à linha calibrada, cobrindo uma
+    # faixa ao redor da base. Ajuste aqui se quiser mais/menos espalhamento.
+    SPREAD_LINES = 3       # nº de linhas de deploy (ímpar mantém uma central)
+    SPREAD_SPACING = 18    # distância (px) entre linhas vizinhas — ajuste mínimo
+    SPREAD_JITTER = 8      # jitter (px) em cada ponto de clique
+    SPREAD_PER_LINE = 4    # pontos de clique amostrados ao longo de cada linha
+    TROOP_KEYS = ('1', '2', '3')      # teclas que selecionam as tropas
+    HERO_KEYS = ('q', 'w', 'e', 'r')  # teclas dos heróis (deploy + habilidade)
+    SPELL_KEYS = ('a', 's', 'd')      # teclas dos feitiços (podem cair na vila)
+    # Cliques por feitiço — dá pra carregar até ~13 no total, e o 'A' costuma
+    # ter muito mais. Clicar além do que existe é inofensivo (não larga nada).
+    SPELL_CLICKS = (13, 5, 5)
+    DEPLOY_CLICKS = 3      # cliques por ponto de tropa (larga uma pilha ali)
+    # Quando True, os deploys só são logados (não mexem o mouse/clicam) — para
+    # testar a sequência sem o jogo aberto.
+    DRY_RUN = False
+
     def _check_storages_full(self, image):
         """Read MY resources (square3/square4 area) and stop when the
         user-configured limits are reached. Returns True when stopping.
@@ -450,61 +470,39 @@ class BotEngine:
     def startAttack(self):
         self.ajustar_click()
         self._emit_status("Atacando")
-        self._log("Enviando tropas…", "action")
-        pydirectinput.press('1')
-        pydirectinput.press('1')
+        self._log("Enviando tropas (espalhado)…", "action")
+        atack = self.posicoes.get("atack")
+        atack2 = self.posicoes.get("atack2")
+        mid_x = (atack[0] + atack2[0]) / 2
+        mid_y = (atack[1] + atack2[1]) / 2
 
-        # cliica pra arrastar
-        pyautogui.moveTo(self.posicoes.get("atack"), duration=0.3)
-        pyautogui.click()
+        old_pause = pyautogui.PAUSE
+        pyautogui.PAUSE = 0.05  # o deploy repete muito; acelera os cliques
+        try:
+            # Tropas (1,2,3): para CADA ponto, seleciona a tropa pela tecla do
+            # número e clica. Ciclar 1->2->3 espalha os três tipos ao redor do
+            # clique calibrado; se um ponto cai no muro, os outros caem aberto.
+            for i, (x, y) in enumerate(self._spread_points()):
+                pydirectinput.press(self.TROOP_KEYS[i % len(self.TROOP_KEYS)])
+                self._deploy_click(x, y, clicks=self.DEPLOY_CLICKS)
 
-        pyautogui.mouseDown()
-        time.sleep(4)
-        pyautogui.moveTo(self.posicoes.get("atack2"), duration=1)  # Move o mouse para a posição final
-        pyautogui.mouseUp()
+            # Heróis (Q,W,E,R): seleciona cada um e clica num ponto de deploy,
+            # junto das tropas (1 clique = 1 herói).
+            hero_points = self._spread_points()
+            for i, hero in enumerate(self.HERO_KEYS):
+                x, y = hero_points[i % len(hero_points)]
+                pydirectinput.press(hero)
+                self._deploy_click(x, y, clicks=1)
 
-        # Coloca todo o resto
-        pyautogui.moveTo((self.posicoes.get("atack")[0]+self.posicoes.get("atack2")[0]) /2 , (self.posicoes.get("atack")[1]+self.posicoes.get("atack2")[1]) /2, duration = random.uniform(1,2) )  # Move o mouse para a posição final
-        pyautogui.click()
-        pyautogui.click()
-        pydirectinput.press('z')
-        pydirectinput.press('z')
-        pyautogui.click()
-        pydirectinput.press('q')
-        pydirectinput.press('q')
-        pyautogui.click()
-        pydirectinput.press('w')
-        pydirectinput.press('w')
-        pyautogui.click()
-        pydirectinput.press('e')
-        pydirectinput.press('e')
-        pyautogui.click()
-        pydirectinput.press('r')
-        pydirectinput.press('r')
-        pyautogui.click()
-        pydirectinput.press('a')
-        pydirectinput.press('a')
-        pyautogui.mouseDown()
-        time.sleep(1)
-        pyautogui.mouseUp()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pyautogui.click()
-        pydirectinput.press('2')
-        pyautogui.mouseDown()
-        time.sleep(4)
-        pyautogui.mouseUp()
-        pydirectinput.press('3')
-        pyautogui.mouseDown()
-        time.sleep(3)
-        pyautogui.mouseUp()
+            # Feitiços (A,S,D): podem cair dentro da vila mesmo — solta no meio
+            # da região de deploy. Cada tecla clica SPELL_CLICKS vezes, pois no
+            # 'A' normalmente há muitos feitiços.
+            for spell, clicks in zip(self.SPELL_KEYS, self.SPELL_CLICKS):
+                pydirectinput.press(spell)
+                self._deploy_click(mid_x + round(random.uniform(-6, 6)),
+                                   mid_y + round(random.uniform(-6, 6)), clicks=clicks)
+        finally:
+            pyautogui.PAUSE = old_pause
 
         time.sleep(random.uniform(5,8))
         pydirectinput.press('q')
@@ -601,15 +599,86 @@ class BotEngine:
         pyautogui.moveTo(self.posicoes.get("next"), duration=0.3)  # Move o mouse para a posição do próximo botão
         pyautogui.mouseUp()
 
+    # ---- deploy espalhado --------------------------------------------------
+    def _spread_drags(self):
+        """Gera ``SPREAD_LINES`` linhas de arraste ``(start, end)`` paralelas à
+        linha ``atack``->``atack2`` e deslocadas ao longo da perpendicular, para
+        espalhar as tropas em diferentes partes ao redor do clique calibrado.
+
+        A base não fica centralizada na tela (``ajustar_click`` ancora o mapa no
+        canto superior-esquerdo para o OCR do saque), então tudo é derivado de
+        ``atack``/``atack2`` — nunca do centro da tela. Cada ponta leva um jitter
+        aleatório de ``±SPREAD_JITTER`` px.
+        """
+        ax, ay = self.posicoes.get("atack")
+        bx, by = self.posicoes.get("atack2")
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy) or 1.0
+        # perpendicular unitária à linha de deploy
+        px, py = -dy / length, dx / length
+
+        j = self.SPREAD_JITTER
+        meio = (self.SPREAD_LINES - 1) / 2
+        drags = []
+        for i in range(self.SPREAD_LINES):
+            off = (i - meio) * self.SPREAD_SPACING
+            start = (ax + px * off + random.uniform(-j, j),
+                     ay + py * off + random.uniform(-j, j))
+            end = (bx + px * off + random.uniform(-j, j),
+                   by + py * off + random.uniform(-j, j))
+            drags.append((start, end))
+        return drags
+
+    def _spread_points(self):
+        """Amostra ``SPREAD_PER_LINE`` pontos ao longo de cada linha de
+        ``_spread_drags``, devolvendo uma lista achatada de ``(x, y)`` para
+        clicar. É nesses pontos que as tropas são largadas."""
+        pts = []
+        for start, end in self._spread_drags():
+            for t in range(self.SPREAD_PER_LINE):
+                f = (t + 0.5) / self.SPREAD_PER_LINE  # evita as pontas exatas
+                pts.append((start[0] + (end[0] - start[0]) * f,
+                            start[1] + (end[1] - start[1]) * f))
+        return pts
+
+    def _deploy_click(self, x, y, clicks=1):
+        """Larga tropa/herói/feitiço no ponto ``(x, y)``: move até lá e clica
+        ``clicks`` vezes. O que largar precisa já estar selecionado (tecla).
+        Respeita ``DRY_RUN`` para testar sem mexer o mouse."""
+        if self.DRY_RUN:
+            self._log(f"[dry-run] deploy ({x:.0f},{y:.0f}) x{clicks}", "debug")
+            return
+        pyautogui.moveTo(x, y, duration=0.12)
+        for _ in range(clicks):
+            pyautogui.click()
+
 
 # --------------------------------------------------------------------------- #
 # Manual smoke test (source only): drives one start/stop cycle.
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
+    import sys
     import queue
 
     q = queue.Queue()
     engine = BotEngine(q)
+
+    # Dry-run só da geometria do deploy espalhado (não abre o jogo nem mexe o
+    # mouse):  python bot_engine.py --drydeploy
+    if "--drydeploy" in sys.argv:
+        engine.posicoes = carregar_ini().get("Posicoes", {})
+        atack = engine.posicoes.get("atack")
+        atack2 = engine.posicoes.get("atack2")
+        print(f"atack={atack}  atack2={atack2}")
+        points = engine._spread_points()
+        print(f"{engine.SPREAD_LINES} linhas x {engine.SPREAD_PER_LINE} pontos = "
+              f"{len(points)} pontos de clique "
+              f"(x{engine.DEPLOY_CLICKS} cliques cada, tropas {engine.TROOP_KEYS}):")
+        for i, (x, y) in enumerate(points):
+            print(f"  ponto {i:2d}  tropa {engine.TROOP_KEYS[i % len(engine.TROOP_KEYS)]}"
+                  f"  ({x:.0f},{y:.0f})")
+        sys.exit(0)
+
     print("Config:", carregar_ini())
     print("Starting engine for 10s (Ctrl+C to abort)...")
     engine.start()
