@@ -405,13 +405,15 @@ class BotEngine:
     SPREAD_SPACING = 18    # distância (px) entre linhas vizinhas — ajuste mínimo
     SPREAD_JITTER = 8      # jitter (px) em cada ponto de clique
     SPREAD_PER_LINE = 4    # pontos de clique amostrados ao longo de cada linha
-    TROOP_KEYS = ('1', '2', '3')      # teclas que selecionam as tropas
-    HERO_KEYS = ('q', 'w', 'e', 'r')  # teclas dos heróis (deploy + habilidade)
-    SPELL_KEYS = ('a', 's', 'd')      # teclas dos feitiços (podem cair na vila)
-    # Cliques por feitiço — dá pra carregar até ~13 no total, e o 'A' costuma
-    # ter muito mais. Clicar além do que existe é inofensivo (não larga nada).
-    SPELL_CLICKS = (13, 5, 5)
-    DEPLOY_CLICKS = 3      # cliques por ponto de tropa (larga uma pilha ali)
+    # Teclas do exército. A regra aqui é LARGAR TUDO com folga: exagerar nos
+    # cliques é de propósito (o que sobra clicado a mais é inofensivo), o ruim é
+    # deixar tropa/herói/feitiço pra trás. Ajuste as teclas se as suas diferem.
+    TROOP_KEYS = ('1', '2', '3', 'z')  # tropas (inclui o balão no 'z'); ~15 cada
+    HERO_KEYS = ('q', 'w', 'e', 'r')   # heróis (deploy + habilidade no fim)
+    SPELL_KEYS = ('a', 's', 'd')       # feitiços (podem cair em qualquer lugar)
+    TROOP_CLICKS = 25   # cliques por tropa (folga sobre os ~15 do slot)
+    HERO_CLICKS = 3     # cliques por herói (garante o deploy)
+    SPELL_CLICKS = 15   # cliques por feitiço (folga sobre os ~13 possíveis)
     # Quando True, os deploys só são logados (não mexem o mouse/clicam) — para
     # testar a sequência sem o jogo aberto.
     DRY_RUN = False
@@ -470,37 +472,31 @@ class BotEngine:
     def startAttack(self):
         self.ajustar_click()
         self._emit_status("Atacando")
-        self._log("Enviando tropas (espalhado)…", "action")
-        atack = self.posicoes.get("atack")
-        atack2 = self.posicoes.get("atack2")
-        mid_x = (atack[0] + atack2[0]) / 2
-        mid_y = (atack[1] + atack2[1]) / 2
+        self._log("Enviando tropas (espalhado, tudo)…", "action")
 
         old_pause = pyautogui.PAUSE
-        pyautogui.PAUSE = 0.05  # o deploy repete muito; acelera os cliques
+        pyautogui.PAUSE = 0.03  # muitos cliques; acelera (temos tempo de sobra)
         try:
-            # Tropas (1,2,3): para CADA ponto, seleciona a tropa pela tecla do
-            # número e clica. Ciclar 1->2->3 espalha os três tipos ao redor do
-            # clique calibrado; se um ponto cai no muro, os outros caem aberto.
-            for i, (x, y) in enumerate(self._spread_points()):
-                pydirectinput.press(self.TROOP_KEYS[i % len(self.TROOP_KEYS)])
-                self._deploy_click(x, y, clicks=self.DEPLOY_CLICKS)
+            # TROPAS (inclui o balão no 'z'): larga TUDO. Re-seleciona a tecla a
+            # cada clique e percorre os pontos várias vezes por tropa, então
+            # nada fica pra trás (até ~15 por slot). Clicar a mais é inofensivo.
+            for troop in self.TROOP_KEYS:
+                for x, y in self._points_for(self.TROOP_CLICKS):
+                    pydirectinput.press(troop)
+                    self._deploy_click(x, y, clicks=1)
 
-            # Heróis (Q,W,E,R): seleciona cada um e clica num ponto de deploy,
-            # junto das tropas (1 clique = 1 herói).
-            hero_points = self._spread_points()
-            for i, hero in enumerate(self.HERO_KEYS):
-                x, y = hero_points[i % len(hero_points)]
-                pydirectinput.press(hero)
-                self._deploy_click(x, y, clicks=1)
+            # HERÓIS (Q,W,E,R): deploy de cada um, junto das tropas.
+            for hero in self.HERO_KEYS:
+                for x, y in self._points_for(self.HERO_CLICKS):
+                    pydirectinput.press(hero)
+                    self._deploy_click(x, y, clicks=1)
 
-            # Feitiços (A,S,D): podem cair dentro da vila mesmo — solta no meio
-            # da região de deploy. Cada tecla clica SPELL_CLICKS vezes, pois no
-            # 'A' normalmente há muitos feitiços.
-            for spell, clicks in zip(self.SPELL_KEYS, self.SPELL_CLICKS):
-                pydirectinput.press(spell)
-                self._deploy_click(mid_x + round(random.uniform(-6, 6)),
-                                   mid_y + round(random.uniform(-6, 6)), clicks=clicks)
+            # FEITIÇOS (A,S,D): podem cair em qualquer lugar — o que importa é
+            # NÃO sobrar nenhum. Muitos cliques por tecla (o 'A' tem até ~13).
+            for spell in self.SPELL_KEYS:
+                for x, y in self._points_for(self.SPELL_CLICKS):
+                    pydirectinput.press(spell)
+                    self._deploy_click(x, y, clicks=1)
         finally:
             pyautogui.PAUSE = old_pause
 
@@ -641,6 +637,15 @@ class BotEngine:
                             start[1] + (end[1] - start[1]) * f))
         return pts
 
+    def _points_for(self, n):
+        """Devolve ``n`` pontos de clique ao redor da base, reciclando os
+        pontos espalhados (com jitter novo a cada volta) até completar ``n``.
+        Usado para clicar muitas vezes por tropa/feitiço sem sobrar nada."""
+        pts = []
+        while len(pts) < n:
+            pts.extend(self._spread_points())
+        return pts[:n]
+
     def _deploy_click(self, x, y, clicks=1):
         """Larga tropa/herói/feitiço no ponto ``(x, y)``: move até lá e clica
         ``clicks`` vezes. O que largar precisa já estar selecionado (tecla).
@@ -670,13 +675,17 @@ if __name__ == "__main__":
         atack = engine.posicoes.get("atack")
         atack2 = engine.posicoes.get("atack2")
         print(f"atack={atack}  atack2={atack2}")
-        points = engine._spread_points()
-        print(f"{engine.SPREAD_LINES} linhas x {engine.SPREAD_PER_LINE} pontos = "
-              f"{len(points)} pontos de clique "
-              f"(x{engine.DEPLOY_CLICKS} cliques cada, tropas {engine.TROOP_KEYS}):")
-        for i, (x, y) in enumerate(points):
-            print(f"  ponto {i:2d}  tropa {engine.TROOP_KEYS[i % len(engine.TROOP_KEYS)]}"
-                  f"  ({x:.0f},{y:.0f})")
+        base = engine._spread_points()
+        print(f"faixa de deploy: {engine.SPREAD_LINES} linhas x "
+              f"{engine.SPREAD_PER_LINE} pontos = {len(base)} pontos-base "
+              f"(reciclados até completar os cliques de cada tecla).")
+        print(f"tropas  {engine.TROOP_KEYS}: {engine.TROOP_CLICKS} cliques cada "
+              f"= {len(engine.TROOP_KEYS) * engine.TROOP_CLICKS} deploys")
+        print(f"heróis  {engine.HERO_KEYS}: {engine.HERO_CLICKS} cliques cada")
+        print(f"feitiços {engine.SPELL_KEYS}: {engine.SPELL_CLICKS} cliques cada")
+        print("pontos-base:")
+        for i, (x, y) in enumerate(base):
+            print(f"  ponto {i:2d}  ({x:.0f},{y:.0f})")
         sys.exit(0)
 
     print("Config:", carregar_ini())

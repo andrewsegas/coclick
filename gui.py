@@ -12,6 +12,7 @@ from tkinter.scrolledtext import ScrolledText
 import licenca
 import notifier
 import updater
+from version import __version__ as APP_VERSION
 from wizard import SetupWizard, POINT, RECT
 from bot_engine import (
     BotEngine,
@@ -82,7 +83,7 @@ class App:
         self._log_entries = collections.deque(maxlen=MAX_LOG_LINES)
 
         self.root = tk.Tk()
-        self.root.title("CoClick — Bot de farm para Clash of Clans")
+        self.root.title(f"CoClick v{APP_VERSION} — Bot de farm para Clash of Clans")
         self.root.minsize(880, 620)
 
         if not self._checar_licenca():
@@ -310,6 +311,13 @@ class App:
         self.log.tag_configure("time", foreground="#b0b0b0")
         for level, color in LOG_COLORS.items():
             self.log.tag_configure(level, foreground=color)
+
+        # --- Rodapé: versão (para o usuário saber se já atualizou) ---
+        footer = ttk.Frame(frame)
+        footer.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, text=f"CoClick v{APP_VERSION}", foreground="#999",
+                  font=("Segoe UI", 8)).grid(row=0, column=0, sticky="e")
 
     def _build_setup(self, parent):
         frame = ttk.LabelFrame(parent, text="Configuração", padding=8)
