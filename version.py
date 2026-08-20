@@ -6,4 +6,4 @@ clicar em "Atualizar". (A checagem de atualização em si é pelo hash do commit
 em updater.py — este número é só para leitura humana.)
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"

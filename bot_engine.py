@@ -405,15 +405,16 @@ class BotEngine:
     SPREAD_SPACING = 18    # distância (px) entre linhas vizinhas — ajuste mínimo
     SPREAD_JITTER = 8      # jitter (px) em cada ponto de clique
     SPREAD_PER_LINE = 4    # pontos de clique amostrados ao longo de cada linha
-    # Teclas do exército. A regra aqui é LARGAR TUDO com folga: exagerar nos
-    # cliques é de propósito (o que sobra clicado a mais é inofensivo), o ruim é
-    # deixar tropa/herói/feitiço pra trás. Ajuste as teclas se as suas diferem.
+    # Teclas do exército. A regra aqui é LARGAR TUDO, mas SEM desperdício: a
+    # tecla seleciona a tropa UMA vez e continua selecionada; depois é só clicar
+    # nos pontos pra largar. Re-apertar a tecla a cada clique (como fazíamos)
+    # deixava o deploy lento e farmava menos. Ajuste as teclas se as suas diferem.
     TROOP_KEYS = ('1', '2', '3', 'z')  # tropas (inclui o balão no 'z'); ~15 cada
     HERO_KEYS = ('q', 'w', 'e', 'r')   # heróis (deploy + habilidade no fim)
     SPELL_KEYS = ('a', 's', 'd')       # feitiços (podem cair em qualquer lugar)
-    TROOP_CLICKS = 25   # cliques por tropa (folga sobre os ~15 do slot)
-    HERO_CLICKS = 3     # cliques por herói (garante o deploy)
-    SPELL_CLICKS = 15   # cliques por feitiço (folga sobre os ~13 possíveis)
+    TROOP_CLICKS = 15   # cliques por tropa (empata com os ~15 do slot)
+    HERO_CLICKS = 2     # cliques por herói (garante o deploy)
+    SPELL_CLICKS = 12   # cliques por feitiço (cobre os ~13 possíveis)
     # Quando True, os deploys só são logados (não mexem o mouse/clicam) — para
     # testar a sequência sem o jogo aberto.
     DRY_RUN = False
@@ -475,32 +476,32 @@ class BotEngine:
         self._log("Enviando tropas (espalhado, tudo)…", "action")
 
         old_pause = pyautogui.PAUSE
-        pyautogui.PAUSE = 0.03  # muitos cliques; acelera (temos tempo de sobra)
+        pyautogui.PAUSE = 0.02  # muitos cliques; acelera (temos tempo de sobra)
         try:
-            # TROPAS (inclui o balão no 'z'): larga TUDO. Re-seleciona a tecla a
-            # cada clique e percorre os pontos várias vezes por tropa, então
-            # nada fica pra trás (até ~15 por slot). Clicar a mais é inofensivo.
+            # TROPAS (inclui o balão no 'z'): seleciona a tecla UMA vez e larga
+            # a pilha inteira clicando nos pontos espalhados. A tropa continua
+            # selecionada entre os cliques — não precisa re-apertar a cada um.
             for troop in self.TROOP_KEYS:
+                pydirectinput.press(troop)
                 for x, y in self._points_for(self.TROOP_CLICKS):
-                    pydirectinput.press(troop)
                     self._deploy_click(x, y, clicks=1)
 
-            # HERÓIS (Q,W,E,R): deploy de cada um, junto das tropas.
+            # HERÓIS (Q,W,E,R): seleciona cada um e larga (poucos cliques bastam).
             for hero in self.HERO_KEYS:
+                pydirectinput.press(hero)
                 for x, y in self._points_for(self.HERO_CLICKS):
-                    pydirectinput.press(hero)
                     self._deploy_click(x, y, clicks=1)
 
-            # FEITIÇOS (A,S,D): podem cair em qualquer lugar — o que importa é
-            # NÃO sobrar nenhum. Muitos cliques por tecla (o 'A' tem até ~13).
+            # FEITIÇOS (A,S,D): seleciona uma vez e larga tudo — podem cair em
+            # qualquer lugar, o que importa é não sobrar nenhum.
             for spell in self.SPELL_KEYS:
+                pydirectinput.press(spell)
                 for x, y in self._points_for(self.SPELL_CLICKS):
-                    pydirectinput.press(spell)
                     self._deploy_click(x, y, clicks=1)
         finally:
             pyautogui.PAUSE = old_pause
 
-        time.sleep(random.uniform(5,8))
+        time.sleep(random.uniform(3,5))
         pydirectinput.press('q')
         time.sleep(random.uniform(0,1))
         pydirectinput.press('w')
@@ -653,7 +654,7 @@ class BotEngine:
         if self.DRY_RUN:
             self._log(f"[dry-run] deploy ({x:.0f},{y:.0f}) x{clicks}", "debug")
             return
-        pyautogui.moveTo(x, y, duration=0.12)
+        pyautogui.moveTo(x, y, duration=0.05)
         for _ in range(clicks):
             pyautogui.click()
 
